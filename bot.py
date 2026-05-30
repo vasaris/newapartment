@@ -14,9 +14,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import (Message, CallbackQuery,
+                           InlineKeyboardMarkup, InlineKeyboardButton)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import storage
@@ -31,6 +32,38 @@ log = logging.getLogger("bot")
 dp = Dispatcher()
 NUM_FIELDS = {"price_min", "price_max", "area_min", "plot_min"}
 STR_FIELDS = {"region", "deal"}
+
+PAGE = 15
+# кэш последней выдачи /search per chat (в памяти; сбрасывается при передеплое)
+_last: dict[int, dict] = {}
+
+
+def _more_kb(remaining: int) -> InlineKeyboardMarkup:
+    n = min(PAGE, remaining)
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"Показать ещё {n} →", callback_data="more")
+    ]])
+
+
+async def _send_page(msg: Message, c) -> None:
+    """Отправляет следующую страницу из кэша выдачи в чат msg."""
+    st = _last.get(msg.chat.id)
+    if not st or not st["items"]:
+        await msg.answer("Сначала сделай /search.")
+        return
+    items, off = st["items"], st["offset"]
+    batch = items[off:off + PAGE]
+    for x in batch:
+        await msg.answer(x.as_message(c), parse_mode="HTML")
+        await asyncio.sleep(0.25)
+    st["offset"] = off + len(batch)
+    remaining = len(items) - st["offset"]
+    if remaining > 0:
+        await msg.answer(f"Показано {st['offset']} из {len(items)}.",
+                         reply_markup=_more_kb(remaining))
+    else:
+        await msg.answer(f"Это все {len(items)} объявлений. "
+                         f"/monitor on — получать новые автоматически.")
 
 HELP = (
     "🏡 <b>KућaBot</b> — аренда кућа, Нови-Сад + ближайшие.\n\n"
@@ -112,14 +145,23 @@ async def cmd_search(m: Message):
     await m.answer("🔎 Ищу по всем порталам…")
     found = monitor.order(await monitor.collect(c), c)
     if not found:
-        await m.answer("Ничего не нашёл. Если порталы точно не пустые — "
-                       "проверь селекторы (python -m sources.<portal>).")
+        await m.answer("Ничего не нашёл по текущим критериям. "
+                       "Попробуй поднять /set price_max или ослабить фильтры.")
         return
-    for x in found[:15]:
-        await m.answer(x.as_message(c), parse_mode="HTML")
-        await asyncio.sleep(0.3)
-    await m.answer(f"Готово: {len(found)} объявлений (показал до 15). "
-                   f"Включи /monitor on, чтобы получать новые автоматически.")
+    _last[m.chat.id] = {"items": found, "offset": 0}
+    await _send_page(m, c)
+
+
+@dp.callback_query(F.data == "more")
+async def cb_more(cb: CallbackQuery):
+    await cb.answer()
+    # убираем кнопку у предыдущего сообщения, чтобы не плодить дубли
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    c = await storage.get_criteria(cb.message.chat.id)
+    await _send_page(cb.message, c)
 
 
 @dp.message(Command("monitor"))
