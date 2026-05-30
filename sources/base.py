@@ -42,6 +42,22 @@ async def fetch_text(url: str, timeout: int = 20) -> str:
 # Минимальная цена-за-метр: ниже — почти всегда койко-место «смештај за
 # раднике», а не дом целиком. Нормальный дом — 2..15 €/m².
 MIN_EUR_PER_M2 = 1.0
+
+# Жёсткие исключения (выкидываем из выдачи целиком):
+#  - этаж в доме («na 1. spratu») = неполное владение, не весь дом+двор;
+#  - «pravnim licima» = сдаётся только юрлицам (бизнес-аренда);
+#  - «radnike» = смештај за раднике (общага/койко-места).
+# Осознанно НЕ режем по «poslovni prostor»: у нормальных домов часто пишут
+# «za stanovanje ili poslovni prostor» — это опция, не категория.
+import re as _re
+_FLOOR_RX = _re.compile(r"\bna\s+\d+\.?\s*sprat", _re.I)
+_EXCL_RX = _re.compile(r"pravnim\s+licima|\bradnik", _re.I)
+
+
+def _excluded_text(t: str) -> bool:
+    if not t:
+        return False
+    return bool(_FLOOR_RX.search(t) or _EXCL_RX.search(t))
 DEFAULT_PRIORITY = [
     "novi sad", "petrovaradin", "sremska kamenica", "veternik",
     "futog", "sremski karlovci", "kać", "rumenka",
@@ -112,16 +128,25 @@ class Listing:
     image: Optional[str] = None
     has_yard: Optional[bool] = None   # двор/двориште подтверждён (None = неизвестно)
     pets_ok: Optional[bool] = None    # питомцы разрешены (None = неизвестно)
+    desc: Optional[str] = None        # описание/мета со страницы (для фильтров)
 
     @property
     def uid(self) -> str:
         return f"{self.source}:{self.ext_id}"
+
+    def is_excluded(self) -> bool:
+        """Жёстко исключаем: сдаётся этаж (не весь дом), только юрлицам,
+        общага «за раднике». Текст берём из заголовка/локации/описания."""
+        blob = " ".join(x for x in (self.title, self.location, self.desc) if x)
+        return _excluded_text(blob)
 
     def dog_score(self) -> int:
         """Сколько «собачьих» сигналов подтверждено: двор + питомцы (0..2)."""
         return (1 if self.has_yard else 0) + (1 if self.pets_ok else 0)
 
     def matches(self, c: Criteria) -> bool:
+        if self.is_excluded():
+            return False
         if self.price is not None:
             if c.price_min and self.price < c.price_min:
                 return False

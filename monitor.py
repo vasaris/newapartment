@@ -12,8 +12,45 @@ from aiogram.exceptions import TelegramRetryAfter
 
 import storage
 from sources import SOURCES, Criteria, Listing
+from sources.base import fetch_text
 
 log = logging.getLogger("monitor")
+
+import re as _re
+import html as _html
+_OGDESC_RX = _re.compile(
+    r'<meta[^>]*(?:property|name)=["\']og:description["\'][^>]*>', _re.I)
+_CONTENT_RX = _re.compile(r'content=["\']([^"\']*)["\']', _re.I)
+# куда есть смысл ходить за описанием: SSR-страницы с og:description.
+# cityexpert (SPA, общий og) и halooglasi (блок бот-фетча) пропускаем.
+_ENRICHABLE = {"4zida", "nekretnine"}
+
+
+async def _fetch_desc(x: Listing, sem: asyncio.Semaphore) -> None:
+    if x.desc or x.source not in _ENRICHABLE:
+        return
+    async with sem:
+        try:
+            html = await fetch_text(x.url, timeout=12)
+        except Exception:
+            return
+    m = _OGDESC_RX.search(html)
+    if not m:
+        return
+    cm = _CONTENT_RX.search(m.group(0))
+    if cm:
+        x.desc = _html.unescape(cm.group(1))
+
+
+async def enrich_and_filter(listings: list[Listing], c: Criteria,
+                            cap: int = 30) -> list[Listing]:
+    """Дотягивает описание у верхушки выдачи и выкидывает исключённые
+    (этаж/юрлица/общага). Хвост за пределами cap оставляем как есть."""
+    head, tail = listings[:cap], listings[cap:]
+    sem = asyncio.Semaphore(8)
+    await asyncio.gather(*[_fetch_desc(x, sem) for x in head])
+    head = [x for x in head if not x.is_excluded()]
+    return head + tail
 
 
 async def collect(c: Criteria) -> list[Listing]:
@@ -50,6 +87,7 @@ async def poll_once(bot: Bot) -> None:
             log.info("чат %s: инициализация (%d), без пуша", chat_id, len(by_uid))
             continue
         new_items = order([by_uid[u] for u in new_uids], c)
+        new_items = await enrich_and_filter(new_items, c, cap=len(new_items))
         for x in new_items:
             try:
                 await bot.send_message(chat_id, x.as_message(c), parse_mode="HTML")

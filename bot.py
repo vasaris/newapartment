@@ -210,6 +210,7 @@ async def cmd_search(m: Message):
     c = await storage.get_criteria(m.chat.id)
     await m.answer("🔎 Ищу по всем порталам…")
     found = monitor.order(await monitor.collect(c), c)
+    found = await monitor.enrich_and_filter(found, c)
     if not found:
         await m.answer("Ничего не нашёл по текущим критериям. "
                        "Попробуй поднять /set price_max или ослабить фильтры.")
