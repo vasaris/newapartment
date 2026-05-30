@@ -39,6 +39,9 @@ async def fetch_text(url: str, timeout: int = 20) -> str:
 
 # Приоритет локаций по умолчанию: Нови-Сад первый, дальше ближайшие.
 # Ключевые слова матчатся по тексту локации объявления (lowercase).
+# Минимальная цена-за-метр: ниже — почти всегда койко-место «смештај за
+# раднике», а не дом целиком. Нормальный дом — 2..15 €/m².
+MIN_EUR_PER_M2 = 1.0
 DEFAULT_PRIORITY = [
     "novi sad", "petrovaradin", "sremska kamenica", "veternik",
     "futog", "sremski karlovci", "kać", "rumenka",
@@ -107,16 +110,26 @@ class Listing:
     rooms: Optional[str] = None
     heating: Optional[str] = None
     image: Optional[str] = None
+    has_yard: Optional[bool] = None   # двор/двориште подтверждён (None = неизвестно)
+    pets_ok: Optional[bool] = None    # питомцы разрешены (None = неизвестно)
 
     @property
     def uid(self) -> str:
         return f"{self.source}:{self.ext_id}"
+
+    def dog_score(self) -> int:
+        """Сколько «собачьих» сигналов подтверждено: двор + питомцы (0..2)."""
+        return (1 if self.has_yard else 0) + (1 if self.pets_ok else 0)
 
     def matches(self, c: Criteria) -> bool:
         if self.price is not None:
             if c.price_min and self.price < c.price_min:
                 return False
             if c.price_max and self.price > c.price_max:
+                return False
+            # отсечка мусора (койко-места «смештај за раднике»): аномально
+            # низкая цена-за-метр. Считаем только когда известны и цена, и площадь.
+            if self.area_m2 and self.price / self.area_m2 < MIN_EUR_PER_M2:
                 return False
         if c.area_min and self.area_m2 is not None and self.area_m2 < c.area_min:
             return False
@@ -133,13 +146,20 @@ class Listing:
         if c is not None and c.rank(self.location) == 0:
             star = "⭐️ "   # объявление в приоритетной локации (Нови-Сад)
         parts = [f"{star}🏡 <b>{self.title}</b>"]
+        badges = []
+        if self.has_yard:
+            badges.append("🌳 двор")
+        if self.pets_ok:
+            badges.append("🐕 može pas")
+        if badges:
+            parts.append(" · ".join(badges))
         meta = []
         if self.price is not None:
             meta.append(f"💶 {self.price} €")
         if self.area_m2:
             meta.append(f"📐 {self.area_m2} m²")
         if self.plot_m2:
-            meta.append(f"🌳 plac {self.plot_m2} m²")
+            meta.append(f"🌿 plac {self.plot_m2} m²")
         if meta:
             parts.append(" · ".join(meta))
         if self.location:

@@ -25,6 +25,23 @@ LISTING_RE = re.compile(r"/izdavanje-kuca/([^/\s\"']+)/[^/\s\"']+/([0-9a-f]{24})
 PRICE_RE = re.compile(r"([\d][\d.]*)\s*€")
 ROOMS_RE = re.compile(r"([\d]+(?:[.,]\d+)?)\s*sob")
 AREA_RE = re.compile(r"([\d][\d.]*)\s*m2", re.I)
+# «Površina dvorišta: 2.5 a» → ари (1 ar = 100 m²)
+PLOT_RE = re.compile(r"dvori[šs]ta:\s*([\d.,]+)\s*a", re.I)
+
+
+def _card_text(anchor) -> str:
+    """Текст карточки объявления: поднимаемся к ближайшему предку, где есть
+    строка фич с 'Ažurirano' (она содержит «• Dozvoljeni ljubimci • …»)."""
+    node = anchor
+    for _ in range(6):
+        node = node.parent
+        if node is None:
+            break
+        txt = node.get_text(" ", strip=True)
+        if "Ažurirano" in txt or "Ažurirano".lower() in txt.lower():
+            if len(txt) < 700:        # защита от слишком крупного предка
+                return txt
+    return ""
 
 
 class FourZida(Source):
@@ -43,36 +60,44 @@ class FourZida(Source):
 
     def _parse(self, html: str) -> list[Listing]:
         soup = BeautifulSoup(html, "html.parser")
-        # группируем все ссылки объявлений по id; собираем текст всех ссылок карточки
+        # группируем все ссылки объявлений по id; храним текст и один anchor
         groups: dict[str, dict] = {}
         for a in soup.find_all("a", href=True):
             m = LISTING_RE.search(a["href"])
             if not m:
                 continue
             slug, ext_id = m.group(1), m.group(2)
-            g = groups.setdefault(ext_id, {"slug": slug, "href": a["href"], "text": ""})
+            g = groups.setdefault(ext_id, {"slug": slug, "href": a["href"],
+                                           "text": "", "anchor": a})
             g["text"] += " " + a.get_text(" ", strip=True)
 
         out = []
         for ext_id, g in groups.items():
             href = g["href"]
             url = href if href.startswith("http") else BASE + href
-            # локация из slug: дефисы → пробелы (для rank() и отображения)
             loc = g["slug"].replace("-", " ")
             text = g["text"]
             price_m = PRICE_RE.search(text)
             rooms_m = ROOMS_RE.search(text)
             area_m = AREA_RE.search(text)
-            # человекочитаемый заголовок: первое «слово» локации с заглавной
             head = g["slug"].split("-")[0].replace("_", " ").title()
+            # фичи из карточки: питомцы, двор, площадь плаца
+            card = _card_text(g["anchor"]).lower()
+            pets = "ljubimci" in card
+            plot_m = PLOT_RE.search(card)
+            plot = int(round(float(plot_m.group(1).replace(",", ".")) * 100)) if plot_m else None
+            yard = bool(plot) or "dvoriš" in card or "dvoriš" in loc
             out.append(Listing(
                 source=self.name, ext_id=ext_id,
                 title=f"Kuća — {head}",
                 url=url,
                 price=to_int(price_m.group(1)) if price_m else None,
                 area_m2=to_int(area_m.group(1)) if area_m else None,
+                plot_m2=plot,
                 rooms=(rooms_m.group(1) + " sobe") if rooms_m else None,
                 location=loc,
+                has_yard=True if yard else None,
+                pets_ok=True if pets else None,
             ))
         return out
 

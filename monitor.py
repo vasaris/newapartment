@@ -30,8 +30,10 @@ async def collect(c: Criteria) -> list[Listing]:
 
 
 def order(listings: list[Listing], c: Criteria) -> list[Listing]:
-    """Нови-Сад первым, потом ближайшие, внутри — по возрастанию цены."""
-    return sorted(listings, key=lambda x: (c.rank(x.location), x.price or 10**9))
+    """Сортировка: сначала подтверждённые «двор/собака» (dog_score), затем
+    Нови-Сад и ближайшие по приоритету, внутри — по возрастанию цены."""
+    return sorted(listings, key=lambda x: (-x.dog_score(), c.rank(x.location),
+                                           x.price or 10**9))
 
 
 async def poll_once(bot: Bot) -> None:

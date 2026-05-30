@@ -67,6 +67,7 @@ class CityExpert(Source):
                    f"{_slug(street, muni)}")
             price = it.get("price")
             size = it.get("size")
+            pets = it.get("petsArray") or []
             out.append(Listing(
                 source=self.name,
                 ext_id=str(it.get("uniqueID") or prop_id),
@@ -76,6 +77,8 @@ class CityExpert(Source):
                 area_m2=int(size) if isinstance(size, (int, float)) else None,
                 location=location,
                 heating=("dvorište" if garden else None),
+                has_yard=True if garden else None,
+                pets_ok=True if pets else None,
             ))
         return out
 
