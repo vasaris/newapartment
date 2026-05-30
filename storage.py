@@ -27,6 +27,13 @@ async def init(db_path: str = DB_PATH) -> None:
                 ts DATETIME DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, uid)
             )""")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS favorites (
+                chat_id INTEGER, uid TEXT, url TEXT, title TEXT,
+                price INTEGER, location TEXT,
+                ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (chat_id, uid)
+            )""")
         await db.commit()
 
 
@@ -83,4 +90,30 @@ async def mark_seen(chat_id: int, uids: list[str], db_path: str = DB_PATH) -> No
         await db.executemany(
             "INSERT OR IGNORE INTO seen (chat_id, uid) VALUES (?,?)",
             [(chat_id, u) for u in uids])
+        await db.commit()
+
+
+# ---------- избранное ----------
+async def add_favorite(chat_id: int, uid: str, url: str, title: str,
+                       price=None, location=None, db_path: str = DB_PATH) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO favorites (chat_id, uid, url, title, price, location) "
+            "VALUES (?,?,?,?,?,?)",
+            (chat_id, uid, url, title, price, location))
+        await db.commit()
+
+
+async def list_favorites(chat_id: int, db_path: str = DB_PATH) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT uid, url, title, price, location FROM favorites "
+            "WHERE chat_id=? ORDER BY ts DESC", (chat_id,)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def remove_favorite(chat_id: int, uid: str, db_path: str = DB_PATH) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("DELETE FROM favorites WHERE chat_id=? AND uid=?", (chat_id, uid))
         await db.commit()
