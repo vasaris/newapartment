@@ -57,8 +57,10 @@ python -m sources.halooglasi
 1. Репо на GitHub → Railway → Deploy from repo.
 2. Variables: `BOT_TOKEN`, опц. `POLL_MINUTES` (по умолчанию 30).
 3. Start command из `Procfile` (`worker: python bot.py`).
-4. ⚠️ SQLite эфемерна между деплоями — подключи Railway Volume под `kuca.db`
-   или переедь на Postgres (меняется только `storage.py`).
+4. **Volume для базы** (чтобы бот не «забывал» показанное при передеплое):
+   Railway → Volumes → New Volume → **Mount path: `/data`**.
+   Затем в Variables добавь **`DB_PATH=/data/kuca.db`** — бот пишет базу туда.
+   (Локально переменную не задавай — база ляжет в `kuca.db` рядом с кодом.)
 5. Если halooglasi с Railway отдаёт пусто/403 — это блок по IP дата-центра,
    оставь только 4zida.
 

@@ -4,8 +4,7 @@ from __future__ import annotations
 import aiosqlite
 
 from sources import Criteria, DEFAULT_PRIORITY
-
-DB_PATH = "kuca.db"
+from config import DB_PATH
 
 _COLS = ("region", "deal", "price_min", "price_max", "area_min",
          "plot_min", "keywords", "priority")
