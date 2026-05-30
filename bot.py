@@ -37,14 +37,45 @@ PAGE = 15
 # кэш последней выдачи /search per chat (в памяти; сбрасывается при передеплое)
 _last: dict[int, dict] = {}
 
-# распознаём ссылку объявления любого из порталов → (source, ext_id, label)
 import re as _re
+import html as _html
+from sources.base import fetch_text as _fetch_text, to_int as _to_int
+
 _URL_PATTERNS = [
     ("4zida",      _re.compile(r"4zida\.rs/izdavanje-kuca/([^/]+)/[^/]+/([0-9a-f]{24})")),
     ("cityexpert", _re.compile(r"cityexpert\.rs/izdavanje-nekretnina/[^/]+/(\d+)")),
     ("nekretnine", _re.compile(r"nekretnine\.rs/oglasi/(\d+)")),
     ("halooglasi", _re.compile(r"halooglasi\.com/nekretnine/[^\s]*?/(\d{6,})")),
 ]
+_PRICE_RX = _re.compile(r"([\d][\d.]*)\s*€")
+_AREA_RX = _re.compile(r"(\d[\d.]*)\s*m[²2]")
+
+
+def _meta(html: str, prop: str):
+    m = _re.search(r'<meta[^>]*(?:property|name)=["\']' + _re.escape(prop)
+                   + r'["\'][^>]*>', html, _re.I)
+    if not m:
+        return None
+    cm = _re.search(r'content=["\']([^"\']*)["\']', m.group(0), _re.I)
+    return _html.unescape(cm.group(1)).strip() if cm else None
+
+
+async def _enrich_from_url(url: str):
+    """Открывает страницу и тянет из og:title/og:description заголовок,
+    цену и площадь. На блоке/SPA/ошибке возвращает None (будет фолбэк)."""
+    try:
+        html = await _fetch_text(url, timeout=15)
+    except Exception:
+        return None
+    title = _meta(html, "og:title")
+    desc = _meta(html, "og:description")
+    if not title or title.lower() in ("city expert", "nekretnine.rs", "4zida.rs"):
+        return None                      # SPA отдал общий заголовок — не годится
+    blob = " ".join(x for x in (title, desc) if x)
+    pm, am = _PRICE_RX.search(blob), _AREA_RX.search(blob)
+    return {"title": title,
+            "price": _to_int(pm.group(1)) if pm else None,
+            "area": _to_int(am.group(1)) if am else None}
 
 
 def _parse_listing_url(url: str):
@@ -258,7 +289,7 @@ async def cmd_favorites(m: Message):
 
 @dp.message(F.text.regexp(r"https?://\S+"))
 async def on_listing_link(m: Message):
-    """Сохранение объявления по присланной ссылке портала."""
+    """Сохранение объявления по присланной ссылке портала (с обогащением)."""
     parsed = _parse_listing_url(m.text)
     if not parsed:
         await m.answer("Это не похоже на ссылку объявления с поддерживаемого "
@@ -267,9 +298,33 @@ async def on_listing_link(m: Message):
     source, ext_id, label = parsed
     uid = f"{source}:{ext_id}"
     url = m.text.strip().split()[0]
-    await storage.add_favorite(m.chat.id, uid, url, f"{label} [{source}]")
-    await m.answer(f"⭐ Сохранил в избранное: <b>{label}</b> [{source}].\n"
-                   f"/favorites — весь список.", parse_mode="HTML")
+    note = await m.answer("⏳ Сохраняю, открываю страницу…")
+
+    data = await _enrich_from_url(url)
+    if data:
+        title = data["title"]
+        price = data["price"]
+        location = label
+        extra = " · ".join(filter(None, [
+            f"💶 {price} €" if price else None,
+            f"📐 {data['area']} m²" if data["area"] else None]))
+        body = f"⭐ Сохранил: <b>{title}</b>"
+        if extra:
+            body += f"\n{extra}"
+    else:
+        title = f"{label} [{source}]"
+        price = location = None
+        location = label
+        body = (f"⭐ Сохранил: <b>{label}</b> [{source}].\n"
+                f"<i>(детали не подтянулись — портал не отдал данные, "
+                f"но ссылка сохранена)</i>")
+
+    await storage.add_favorite(m.chat.id, uid, url, title, price, location)
+    body += "\n/favorites — весь список."
+    try:
+        await note.edit_text(body, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception:
+        await m.answer(body, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(Command("monitor"))
