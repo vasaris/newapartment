@@ -1,19 +1,20 @@
 from .base import Source, Listing, Criteria, DEFAULT_PRIORITY
 from .fourzida import FourZida
-from .halooglasi import HaloOglasi
 from .cityexpert import CityExpert
 from .nekretnine import Nekretnine
+from .halooglasi import HaloOglasi
 
-# Активные источники. 4zida — основной (SSR, проверен).
-# halooglasi — SSR, но может блокировать запросы с дата-центра (Railway);
-#   если ловишь блок — оставь только 4zida.
-# cityexpert и nekretnine — SPA, нужен их JSON-API (см. докстринги),
-#   поэтому по умолчанию ВЫКЛЮЧЕНЫ. Допилишь API → раскомментируй.
+# Все 4 источника активны.
+#   4zida      — SSR (паттерн ссылки), основной, ≈200+ кућа.
+#   cityexpert — JSON-API /api/Search (ptId=2=кућа).
+#   nekretnine — SSR, новый формат /izdavanje-samostalnih-kuca/ (паттерн /oglasi/).
+#   halooglasi — SSR (.product-item); может блокировать дата-центры (Railway) —
+#                если ловишь пустые ответы/403, закомментируй его.
 SOURCES: list[Source] = [
     FourZida(),
+    CityExpert(),
+    Nekretnine(),
     HaloOglasi(),
-    # CityExpert(),    # включить после реализации JSON-API
-    # Nekretnine(),    # включить после реализации JSON-API
 ]
 
 __all__ = ["Source", "Listing", "Criteria", "DEFAULT_PRIORITY", "SOURCES",

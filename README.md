@@ -8,18 +8,17 @@ aiogram 3 + APScheduler + SQLite, деплой на Railway.
 | Портал | Рендеринг | Статус | Примечание |
 |--------|-----------|--------|------------|
 | **4zida.rs** | SSR | ✅ работает | основной, ≈200+ кућа в НС; парс по паттерну ссылки |
+| **cityexpert.rs** | Angular SPA | ✅ работает | через JSON-API `/api/Search?req={...}` (ptId=2=кућа) |
 | **halooglasi.com** | SSR | ✅ работает | может блокировать IP дата-центров (Railway) |
-| **cityexpert.rs** | Angular SPA | ⏸ заглушка | в HTML только оболочка → нужен JSON-API |
-| **nekretnine.rs** | Next.js SPA | ⏸ заглушка | список редиректит на главную → нужен JSON-API |
+| **nekretnine.rs** | SSR (новый URL) | ✅ работает | `/izdavanje-samostalnih-kuca/{grad}/`, парс по `/oglasi/{id}/` |
 
-cityexpert и nekretnine простым `aiohttp + bs4` не парсятся — это архитектура
-сайтов, а не вопрос селекторов. Они оставлены готовыми заглушками с пошаговой
-инструкцией, как подключить их внутренний JSON-API (ловится в DevTools→Network
-за 5 минут) — см. докстринги в `sources/cityexpert.py` и `sources/nekretnine.py`.
-После реализации API раскомментируй их в `sources/__init__.py`.
+cityexpert парсится не из HTML (это Angular SPA), а через его внутренний
+JSON-API: `GET https://cityexpert.rs/api/Search?req={JSON}` с фильтрами
+`ptId=[2]` (кућа), `cityId=2` (НС), `rentOrSale="r"`. Реализовано и проверено.
 
-> Про **ptId** для кућа на cityexpert: на SPA он не в URL страницы, а в теле
-> XHR-запроса к API. Возьмёшь точное значение из payload в DevTools.
+nekretnine.rs парсится из HTML, но только в НОВОМ формате URL
+(`/izdavanje-samostalnih-kuca/novi-sad/`) — старый `/stambeni-objekti/...`
+редиректит на главную. Тип = самостојећа кућа (idTipologia=7).
 
 ## Как работают локации и приоритет
 4zida отдаёт локацию прямо в ссылке объявления
@@ -48,7 +47,9 @@ python bot.py
 
 Проверить парсер портала на живой странице:
 ```bash
-python -m sources.fourzida      # должен распознать ~40 объявлений
+python -m sources.fourzida      # ~40 объявлений
+python -m sources.cityexpert    # ~11 кућа (JSON-API)
+python -m sources.nekretnine    # ~33 самостојеће куће (SSR)
 python -m sources.halooglasi
 ```
 
@@ -71,6 +72,6 @@ sources/
   base.py         — Listing/Criteria, rank(), fetch-хелпер, Source ABC
   fourzida.py     — ✅ основной парсер (по паттерну ссылки)
   halooglasi.py   — ✅ парсер .product-item
-  cityexpert.py   — ⏸ заглушка + инструкция под JSON-API
-  nekretnine.py   — ⏸ заглушка + инструкция под JSON-API
+  cityexpert.py   — ✅ источник через JSON-API
+  nekretnine.py   — ✅ источник SSR (паттерн /oglasi/)
 ```
