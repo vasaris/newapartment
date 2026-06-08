@@ -68,6 +68,15 @@ class CityExpert(Source):
             price = it.get("price")
             size = it.get("size")
             pets = it.get("petsArray") or []
+            # признаки состояния/обставленности из JSON (если cityexpert их отдаёт):
+            # собираем строковые значения вероятных полей в desc — скоринг по ним.
+            bits = []
+            for k in ("furnished", "furnishing", "furnishedType", "state",
+                      "condition", "renovated", "propState", "structure"):
+                v = it.get(k)
+                if isinstance(v, str) and v:
+                    bits.append(v)
+            desc = " ".join(bits) or None
             out.append(Listing(
                 source=self.name,
                 ext_id=str(it.get("uniqueID") or prop_id),
@@ -79,6 +88,7 @@ class CityExpert(Source):
                 heating=("dvorište" if garden else None),
                 has_yard=True if garden else None,
                 pets_ok=True if pets else None,
+                desc=desc,
             ))
         return out
 

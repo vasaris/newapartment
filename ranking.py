@@ -27,6 +27,18 @@ STRUJA_PENALTY = 7        # только электроотопление
 AREA_BONUS = 2            # площадь не ниже area_min
 PRICE_K = 26              # сила цены: term = K*(бюджет−цена)/бюджет
 PRICE_POS_CAP = 10        # бонус за «дешевле бюджета» ограничен (не топит мусор)
+EMPTY_PENALTY = 12        # «prazan» — пустой, въезжать не с чем
+FURNISHED_BONUS = 5       # «namešten» — обставлен, можно жить сразу
+RENO_BONUS = 5            # renoviran / lux / novo — человеческий ремонт
+OLD_PENALTY = 7           # «u izvornom stanju» / «za renoviranje» — бабушкина Югославия
+
+# слова состояния (в описании/заголовке, lowercase)
+_EMPTY = ("prazan", "prazna", "prazno", "nenamešten", "nenamesten")
+_FURNISHED = ("namešten", "namesten", "opremljen")
+_NEEDS_WORK = ("za renoviranje", "potrebno renoviranje", "u izvornom stanju",
+               "za adaptaciju", "derut", "trošan", "trosan", "staro stanje")
+_GOOD_RENO = ("renoviran", "sređen", "sredjen", "lux", "luksuz", "novogradnja",
+              "novo", "savremen", "moderno", "kompletno opremljen")
 
 # порог тира: score >= cutoff (по «сырому» score, не обрезанному к 100)
 TIER_CUTOFFS = [("S", 84), ("A", 76), ("B", 68), ("C", 60), ("D", 52)]
@@ -54,6 +66,16 @@ def score(x: Listing, c: Criteria) -> float:
         s += min(term, PRICE_POS_CAP) if term > 0 else term   # штраф вниз не ограничен
     if x.area_m2 and x.area_m2 >= (c.area_min or 0):
         s += AREA_BONUS
+    # состояние и готовность к въезду (по тексту: заголовок+отопление+описание)
+    text = f"{x.title} {x.heating or ''} {x.desc or ''}".lower()
+    if any(k in text for k in _EMPTY):
+        s -= EMPTY_PENALTY
+    elif any(k in text for k in _FURNISHED):
+        s += FURNISHED_BONUS
+    if any(k in text for k in _NEEDS_WORK):
+        s -= OLD_PENALTY
+    elif any(k in text for k in _GOOD_RENO):
+        s += RENO_BONUS
     return round(s, 1)
 
 
