@@ -129,6 +129,8 @@ class Listing:
     has_yard: Optional[bool] = None   # двор/двориште подтверждён (None = неизвестно)
     pets_ok: Optional[bool] = None    # питомцы разрешены (None = неизвестно)
     desc: Optional[str] = None        # описание/мета со страницы (для фильтров)
+    photos: list = field(default_factory=list)   # url'ы фото для vision-анализа
+    photo_q: Optional[float] = None   # оценка фото 1..5 (vision), None = не анализ.
 
     @property
     def uid(self) -> str:

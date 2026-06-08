@@ -14,6 +14,7 @@ from aiogram.exceptions import TelegramRetryAfter
 
 import storage
 import ranking
+import vision
 from sources import SOURCES, Criteria, Listing
 from sources.base import fetch_text
 
@@ -23,20 +24,44 @@ import re as _re
 import html as _html
 _OGDESC_RX = _re.compile(
     r'<meta[^>]*(?:property|name)=["\']og:description["\'][^>]*>', _re.I)
+_OGIMG_RX = _re.compile(
+    r'<meta[^>]*(?:property|name)=["\']og:image["\'][^>]*>', _re.I)
 _CONTENT_RX = _re.compile(r'content=["\']([^"\']*)["\']', _re.I)
-# куда есть смысл ходить за описанием: SSR-страницы с og:description.
-# cityexpert (SPA, общий og) и halooglasi (блок бот-фетча) пропускаем.
+_NEKR_IMG_RX = _re.compile(r'https://pic\.nekretnine\.rs/image/\d+/[a-z0-9\-]+\.jpg', _re.I)
+# куда есть смысл ходить за описанием/фото: SSR-страницы.
 _ENRICHABLE = {"4zida", "nekretnine"}
 
 
+def _extract_photos(html: str, source: str) -> list[str]:
+    if source == "nekretnine":
+        seen, out = set(), []
+        for u in _NEKR_IMG_RX.findall(html):
+            if u not in seen:
+                seen.add(u); out.append(u)
+            if len(out) >= 3:
+                break
+        return out
+    # 4zida и прочее — берём главное фото из og:image
+    m = _OGIMG_RX.search(html)
+    if m:
+        cm = _CONTENT_RX.search(m.group(0))
+        if cm and cm.group(1).startswith("http"):
+            return [_html.unescape(cm.group(1))]
+    return []
+
+
 async def _fetch_desc(x: Listing, sem: asyncio.Semaphore) -> None:
-    if x.desc or x.source not in _ENRICHABLE:
+    if x.source not in _ENRICHABLE:
+        return
+    if x.desc and x.photos:
         return
     async with sem:
         try:
             html = await fetch_text(x.url, timeout=12)
         except Exception:
             return
+    if not x.photos:
+        x.photos = _extract_photos(html, x.source)
     m = _OGDESC_RX.search(html)
     if not m:
         return
@@ -81,12 +106,39 @@ def order(listings: list[Listing], c: Criteria) -> list[Listing]:
                                            x.price or 10**9))
 
 
+async def _attach_photo_scores(uniq: list[Listing]) -> None:
+    """Проставляет photo_q каждому объявлению: из кэша, иначе анализирует фото
+    через vision и кэширует. Без ANTHROPIC_API_KEY — тихо пропускает (фото=0)."""
+    if not vision.available():
+        return
+    cached = await storage.get_photo_scores([x.uid for x in uniq])
+    sem = asyncio.Semaphore(8)
+    todo = [x for x in uniq if x.uid not in cached and x.photos]
+
+    async def _one(x: Listing):
+        r = await vision.analyze(x.photos, sem)
+        if r:
+            await storage.set_photo_score(x.uid, r["q"], r["empty"], r["dated"])
+            cached[x.uid] = r
+
+    if todo:
+        await asyncio.gather(*[_one(x) for x in todo])
+    for x in uniq:
+        c = cached.get(x.uid)
+        if c:
+            x.photo_q = c["q"]
+            if c["empty"] and "prazan" not in (x.desc or "").lower():
+                x.desc = (x.desc or "") + " prazan"   # пусто по фото → штраф состояния
+
+
 async def refresh_ranking(chat_id: int, c: Criteria) -> tuple[list[dict], list[str]]:
-    """Собирает все источники, фильтрует, дедупит, скорит по тирам и
-    апсертит в персистентный рейтинг. Возвращает (scored, uid'ы новых)."""
+    """Собирает источники, фильтрует, дедупит, оценивает фото (vision) и
+    скорит по тирам, апсертит в персистентный рейтинг. (scored, uid'ы новых)."""
     listings = await collect(c)
     listings = await enrich_and_filter(listings, c, cap=60)
-    scored = ranking.rank_all(listings, c)
+    uniq = ranking.dedup(listings)
+    await _attach_photo_scores(uniq)
+    scored = ranking.score_listings(uniq, c)
     new_uids = await storage.upsert_ranked(chat_id, scored)
     return scored, new_uids
 

@@ -23,6 +23,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import storage
 import monitor
 import ranking
+import vision
 from config import BOT_TOKEN, POLL_MINUTES
 from sources import SOURCES
 
@@ -157,7 +158,10 @@ _TIER_EMOJI = {"S": "🟣", "A": "🟢", "B": "🔵", "C": "🟡", "D": "🟠", 
 @dp.message(Command("rank", "tiers", "rejting"))
 async def cmd_rank(m: Message):
     c = await storage.get_criteria(m.chat.id)
-    await m.answer("📊 Обновляю рейтинг по всем порталам…")
+    note = ("📊 Обновляю рейтинг: опрашиваю порталы"
+            + (" и анализирую фото (~1–3 мин в первый раз)…"
+               if vision.available() else "…"))
+    await m.answer(note)
     await monitor.refresh_ranking(m.chat.id, c)      # свежий прогон + апсерт
     rows = await storage.get_ranked(m.chat.id)
     if not rows:

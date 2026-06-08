@@ -42,6 +42,11 @@ async def init(db_path: str = DB_PATH) -> None:
                 score REAL, tier TEXT, first_seen INTEGER, last_seen INTEGER,
                 PRIMARY KEY (chat_id, uid)
             )""")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS photo_cache (
+                uid TEXT PRIMARY KEY, q REAL, empty INTEGER, dated INTEGER,
+                ts INTEGER
+            )""")
         await db.commit()
 
 
@@ -195,3 +200,28 @@ async def ranked_chats(db_path: str = DB_PATH) -> list[int]:
     async with aiosqlite.connect(db_path) as db:
         async with db.execute("SELECT DISTINCT chat_id FROM ranked") as cur:
             return [r[0] for r in await cur.fetchall()]
+
+
+# ---------- кэш vision-оценок фото (общий по uid) ----------
+async def get_photo_scores(uids: list[str], db_path: str = DB_PATH) -> dict:
+    if not uids:
+        return {}
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        qs = ",".join("?" * len(uids))
+        async with db.execute(
+            f"SELECT uid, q, empty, dated FROM photo_cache WHERE uid IN ({qs})",
+            uids) as cur:
+            return {r["uid"]: {"q": r["q"], "empty": bool(r["empty"]),
+                               "dated": bool(r["dated"])}
+                    for r in await cur.fetchall()}
+
+
+async def set_photo_score(uid: str, q: float, empty: bool, dated: bool,
+                          db_path: str = DB_PATH) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO photo_cache (uid, q, empty, dated, ts) "
+            "VALUES (?,?,?,?,strftime('%s','now'))",
+            (uid, q, int(empty), int(dated)))
+        await db.commit()
