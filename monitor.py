@@ -27,26 +27,44 @@ _OGDESC_RX = _re.compile(
 _OGIMG_RX = _re.compile(
     r'<meta[^>]*(?:property|name)=["\']og:image["\'][^>]*>', _re.I)
 _CONTENT_RX = _re.compile(r'content=["\']([^"\']*)["\']', _re.I)
-_NEKR_IMG_RX = _re.compile(r'https://pic\.nekretnine\.rs/image/\d+/[a-z0-9\-]+\.jpg', _re.I)
-# куда есть смысл ходить за описанием/фото: SSR-страницы.
-_ENRICHABLE = {"4zida", "nekretnine"}
+_NEKR_IMG_RX = _re.compile(r'https://pic\.nekretnine\.rs/image/(\d+)/[a-z0-9\-]+\.jpg', _re.I)
+_CE_IMG_RX = _re.compile(r'https://img\.cityexpert\.rs/properties/\d+x/[^\s"\'<>)]+?\.jpg', _re.I)
+_Z_IMG_RX = _re.compile(r'https://resizer2\.4zida\.rs/[^\s"\'<>)]+?\.(?:jpe?g|webp)', _re.I)
+# куда есть смысл ходить за описанием/фото: SSR-страницы с галереей в HTML.
+# halooglasi (блок бот-фетча) пропускаем.
+_ENRICHABLE = {"4zida", "nekretnine", "cityexpert"}
 
 
 def _extract_photos(html: str, source: str) -> list[str]:
     if source == "nekretnine":
         seen, out = set(), []
-        for u in _NEKR_IMG_RX.findall(html):
-            if u not in seen:
-                seen.add(u); out.append(u)
-            if len(out) >= 3:
-                break
+        for m in _NEKR_IMG_RX.finditer(html):
+            iid = m.group(1)
+            if iid not in seen:
+                seen.add(iid); out.append(m.group(0))
         return out
-    # 4zida и прочее — берём главное фото из og:image
-    m = _OGIMG_RX.search(html)
-    if m:
-        cm = _CONTENT_RX.search(m.group(0))
-        if cm and cm.group(1).startswith("http"):
-            return [_html.unescape(cm.group(1))]
+    if source == "cityexpert":
+        by_name = {}
+        for u in _CE_IMG_RX.findall(html):
+            name = u.rsplit("/", 1)[-1]
+            if name not in by_name or "/1920x/" in u:
+                by_name[name] = u            # один кадр = один файл, берём 1920x
+        return list(by_name.values())
+    if source == "4zida":
+        seen, out = set(), []
+        for u in _Z_IMG_RX.findall(html):
+            if "assets" in u or "logo" in u:
+                continue                      # это лого/иконки, не фото объекта
+            key = u.rsplit("/", 1)[-1]        # base64-сегмент = id кадра (без размера)
+            if key not in seen:
+                seen.add(key); out.append(u)
+        if out:
+            return out
+        m = _OGIMG_RX.search(html)            # фолбэк — обложка
+        if m:
+            cm = _CONTENT_RX.search(m.group(0))
+            if cm and cm.group(1).startswith("http"):
+                return [_html.unescape(cm.group(1))]
     return []
 
 
@@ -66,9 +84,8 @@ async def _fetch_desc(x: Listing, sem: asyncio.Semaphore) -> None:
     if not m:
         return
     cm = _CONTENT_RX.search(m.group(0))
-    if cm:
+    if cm and not x.desc:                     # не затираем desc из JSON (cityexpert)
         x.desc = _html.unescape(cm.group(1))
-        # двор часто не размечен флагом, но виден в описании — поднимаем его
         low = x.desc.lower()
         if x.has_yard is None and ("dvoriš" in low or "dvoris" in low
                                    or "placem" in low or "plac od" in low):

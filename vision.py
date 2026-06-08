@@ -17,6 +17,16 @@ import aiohttp
 API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 API_URL = "https://api.anthropic.com/v1/messages"
 MODEL = os.environ.get("VISION_MODEL", "claude-haiku-4-5-20251001")
+# сколько кадров слать на анализ: берём равномерно по всей галерее (не первые N,
+# чтобы не смотреть только фасад). Поднимай через переменную MAX_PHOTOS.
+MAX_PHOTOS = int(os.environ.get("MAX_PHOTOS", "12"))
+
+
+def _sample(photos: list[str]) -> list[str]:
+    if len(photos) <= MAX_PHOTOS:
+        return photos
+    step = len(photos) / MAX_PHOTOS
+    return [photos[int(i * step)] for i in range(MAX_PHOTOS)]
 
 _PROMPT = (
     "These are photos of a house/apartment listed for rent. The tenant wants a "
@@ -38,7 +48,7 @@ async def analyze(photos: list[str], sem: asyncio.Semaphore) -> dict | None:
     if not API_KEY or not photos:
         return None
     content = [{"type": "image", "source": {"type": "url", "url": u}}
-               for u in photos[:3]]
+               for u in _sample(photos)]
     content.append({"type": "text", "text": _PROMPT})
     body = {"model": MODEL, "max_tokens": 90,
             "messages": [{"role": "user", "content": content}]}
