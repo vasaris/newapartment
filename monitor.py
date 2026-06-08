@@ -43,6 +43,11 @@ async def _fetch_desc(x: Listing, sem: asyncio.Semaphore) -> None:
     cm = _CONTENT_RX.search(m.group(0))
     if cm:
         x.desc = _html.unescape(cm.group(1))
+        # двор часто не размечен флагом, но виден в описании — поднимаем его
+        low = x.desc.lower()
+        if x.has_yard is None and ("dvoriš" in low or "dvoris" in low
+                                   or "placem" in low or "plac od" in low):
+            x.has_yard = True
 
 
 async def enrich_and_filter(listings: list[Listing], c: Criteria,

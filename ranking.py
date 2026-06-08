@@ -11,21 +11,25 @@ from __future__ import annotations
 from sources import Criteria, Listing
 
 # --- веса скоринга ---
+# Философия: цена влияет «средне» — заметно двигает, но сильный дом
+# (двор+собака+локация+большой плац) может перевесить умеренную переплату.
+# Score НЕ обрезается к 100 (иначе на верхах штраф за цену «тонет»);
+# к 100 округляем только при показе.
 BASE = 50.0
-LOC_BONUS = {0: 22, 1: 14, 2: 10, 3: 7, 4: 5}   # по c.rank(): НС=0 → +22
-LOC_UNKNOWN = -8                                  # локация вне приоритета
-YARD_BONUS = 14
-PETS_BONUS = 12
-PLAC_PER_AR = 1.4         # за каждый ар плаца (до 10 ари)
-PLAC_AR_CAP = 10
-GAS_BONUS = 6             # газ/централно/подно
-STRUJA_PENALTY = 9        # только электроотопление
-AREA_BONUS = 3            # площадь не ниже area_min
-UNDER_BUDGET_BONUS = 10   # максимум, если сильно дешевле бюджета
-OVER_BUDGET_PENALTY = 28  # на единицу превышения бюджета
+LOC_BONUS = {0: 16, 1: 12, 2: 9, 3: 6, 4: 4}    # по c.rank(): НС=0 → +16
+LOC_UNKNOWN = -6                                  # локация вне приоритета
+YARD_BONUS = 9
+PETS_BONUS = 9
+PLAC_PER_AR = 1.2         # за каждый ар плаца (до 8 ари)
+PLAC_AR_CAP = 8
+GAS_BONUS = 4             # газ/централно/подно
+STRUJA_PENALTY = 7        # только электроотопление
+AREA_BONUS = 2            # площадь не ниже area_min
+PRICE_K = 26              # сила цены: term = K*(бюджет−цена)/бюджет
+PRICE_POS_CAP = 10        # бонус за «дешевле бюджета» ограничен (не топит мусор)
 
-# порог тира: score >= cutoff
-TIER_CUTOFFS = [("S", 88), ("A", 78), ("B", 68), ("C", 58), ("D", 48)]
+# порог тира: score >= cutoff (по «сырому» score, не обрезанному к 100)
+TIER_CUTOFFS = [("S", 84), ("A", 76), ("B", 68), ("C", 60), ("D", 52)]
 TIERS = ["S", "A", "B", "C", "D", "E"]
 
 
@@ -40,19 +44,17 @@ def score(x: Listing, c: Criteria) -> float:
     if x.pets_ok:
         s += PETS_BONUS
     blob = f"{x.heating or ''} {x.desc or ''}".lower()
-    if any(k in blob for k in ("gas", "centralno", " cg", "podno", "centraln")):
+    if any(k in blob for k in ("gas", "centraln", " cg", "podno")):
         s += GAS_BONUS
     if "struja" in blob or "na struju" in blob:
         s -= STRUJA_PENALTY
     budget = c.price_max or 1300
     if x.price:
-        if x.price <= budget:
-            s += UNDER_BUDGET_BONUS * (1 - x.price / budget)
-        else:
-            s -= OVER_BUDGET_PENALTY * (x.price / budget - 1)
+        term = PRICE_K * (budget - x.price) / budget
+        s += min(term, PRICE_POS_CAP) if term > 0 else term   # штраф вниз не ограничен
     if x.area_m2 and x.area_m2 >= (c.area_min or 0):
         s += AREA_BONUS
-    return round(max(0.0, min(100.0, s)), 1)
+    return round(s, 1)
 
 
 def tier(s: float) -> str:

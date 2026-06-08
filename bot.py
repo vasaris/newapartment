@@ -182,7 +182,7 @@ async def cmd_rank(m: Message):
             plac = f", plac {r['plot']}m²" if r["plot"] else ""
             loc = (r["location"] or "").split(",")[0]
             lines.append(
-                f"· <b>{int(r['score'])}</b> {badges} <a href=\"{r['url']}\">"
+                f"· <b>{min(100, int(r['score']))}</b> {badges} <a href=\"{r['url']}\">"
                 f"{price} {area}{plac} — {loc}</a>")
         header, body = lines[0], lines[1:]
         for i in range(0, len(body), 25):
