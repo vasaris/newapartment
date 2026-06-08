@@ -34,6 +34,14 @@ async def init(db_path: str = DB_PATH) -> None:
                 ts DATETIME DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, uid)
             )""")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ranked (
+                chat_id INTEGER, uid TEXT, source TEXT, url TEXT, title TEXT,
+                price INTEGER, area INTEGER, location TEXT,
+                has_yard INTEGER, pets_ok INTEGER, plot INTEGER,
+                score REAL, tier TEXT, first_seen INTEGER, last_seen INTEGER,
+                PRIMARY KEY (chat_id, uid)
+            )""")
         await db.commit()
 
 
@@ -117,3 +125,73 @@ async def remove_favorite(chat_id: int, uid: str, db_path: str = DB_PATH) -> Non
     async with aiosqlite.connect(db_path) as db:
         await db.execute("DELETE FROM favorites WHERE chat_id=? AND uid=?", (chat_id, uid))
         await db.commit()
+
+
+# ---------- рейтинг (персистентный, с тирами и last_seen) ----------
+async def upsert_ranked(chat_id: int, rows: list[dict], db_path: str = DB_PATH) -> list[str]:
+    """rows: [{listing, score, tier}]. Вставляет новые (first_seen=now),
+    обновляет существующие (score/tier/last_seen). Возвращает uid'ы новых."""
+    import time
+    now = int(time.time())
+    new_uids: list[str] = []
+    async with aiosqlite.connect(db_path) as db:
+        for d in rows:
+            x = d["listing"]
+            async with db.execute(
+                "SELECT 1 FROM ranked WHERE chat_id=? AND uid=?", (chat_id, x.uid)) as cur:
+                exists = await cur.fetchone()
+            if exists:
+                await db.execute(
+                    "UPDATE ranked SET score=?, tier=?, price=?, area=?, location=?, "
+                    "has_yard=?, pets_ok=?, plot=?, last_seen=? WHERE chat_id=? AND uid=?",
+                    (d["score"], d["tier"], x.price, x.area_m2, x.location,
+                     int(x.has_yard) if x.has_yard is not None else None,
+                     int(x.pets_ok) if x.pets_ok is not None else None,
+                     x.plot_m2, now, chat_id, x.uid))
+            else:
+                new_uids.append(x.uid)
+                await db.execute(
+                    "INSERT INTO ranked (chat_id, uid, source, url, title, price, area, "
+                    "location, has_yard, pets_ok, plot, score, tier, first_seen, last_seen) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (chat_id, x.uid, x.source, x.url, x.title, x.price, x.area_m2,
+                     x.location, int(x.has_yard) if x.has_yard is not None else None,
+                     int(x.pets_ok) if x.pets_ok is not None else None,
+                     x.plot_m2, d["score"], d["tier"], now, now))
+        await db.commit()
+    return new_uids
+
+
+async def get_ranked(chat_id: int, db_path: str = DB_PATH) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM ranked WHERE chat_id=? ORDER BY score DESC", (chat_id,)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def stale_ranked(chat_id: int, older_than_s: int, db_path: str = DB_PATH) -> list[dict]:
+    """Записи, не подтверждённые опросом дольше older_than_s секунд."""
+    import time
+    cutoff = int(time.time()) - older_than_s
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT uid, source, url, last_seen FROM ranked WHERE chat_id=? AND last_seen<?",
+            (chat_id, cutoff)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def remove_ranked(chat_id: int, uids: list[str], db_path: str = DB_PATH) -> None:
+    if not uids:
+        return
+    async with aiosqlite.connect(db_path) as db:
+        await db.executemany(
+            "DELETE FROM ranked WHERE chat_id=? AND uid=?", [(chat_id, u) for u in uids])
+        await db.commit()
+
+
+async def ranked_chats(db_path: str = DB_PATH) -> list[int]:
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute("SELECT DISTINCT chat_id FROM ranked") as cur:
+            return [r[0] for r in await cur.fetchall()]

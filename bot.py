@@ -136,6 +136,7 @@ HELP = (
     "/set price_max 800 — поле (price_min/price_max/area_min/plot_min/region/deal)\n"
     "/kw dvoriste, garaza — ключевые слова\n"
     "/loc novi sad, petrovaradin, sremska kamenica — приоритет локаций\n"
+    "/rank — рейтинг всех кућа по тирам S–E\n"
     "/favorites — сохранённые объявления\n"
     "  (жми ⭐ под объявлением или пришли ссылку — сохраню)\n"
     "/monitor on — слать новые автоматически\n"
@@ -147,6 +148,48 @@ HELP = (
 @dp.message(Command("start", "help"))
 async def cmd_start(m: Message):
     await m.answer(HELP, parse_mode="HTML")
+
+
+_TIER_EMOJI = {"S": "🟣", "A": "🟢", "B": "🔵", "C": "🟡", "D": "🟠", "E": "⚪️"}
+
+
+@dp.message(Command("rank", "tiers", "rejting"))
+async def cmd_rank(m: Message):
+    c = await storage.get_criteria(m.chat.id)
+    await m.answer("📊 Обновляю рейтинг по всем порталам…")
+    await monitor.refresh_ranking(m.chat.id, c)      # свежий прогон + апсерт
+    rows = await storage.get_ranked(m.chat.id)
+    if not rows:
+        await m.answer("Пока пусто. Проверь /criteria или сделай /search.")
+        return
+    # группируем по тирам
+    by_tier: dict[str, list] = {t: [] for t in ranking.TIERS}
+    for r in rows:
+        by_tier.get(r["tier"], by_tier["E"]).append(r)
+    total = len(rows)
+    head = " · ".join(f"{t}:{len(by_tier[t])}" for t in ranking.TIERS if by_tier[t])
+    await m.answer(f"<b>Рейтинг кућа — {total} шт.</b>\n{head}", parse_mode="HTML")
+    for t in ranking.TIERS:
+        items = by_tier[t]
+        if not items:
+            continue
+        lines = [f"{_TIER_EMOJI[t]} <b>Тир {t}</b> ({len(items)})"]
+        for r in items:
+            badges = ("🌳" if r["has_yard"] else "") + ("🐕" if r["pets_ok"] else "")
+            price = f"{r['price']}€" if r["price"] else "—"
+            area = f"{r['area']}m²" if r["area"] else ""
+            plac = f", plac {r['plot']}m²" if r["plot"] else ""
+            loc = (r["location"] or "").split(",")[0]
+            lines.append(
+                f"· <b>{int(r['score'])}</b> {badges} <a href=\"{r['url']}\">"
+                f"{price} {area}{plac} — {loc}</a>")
+        header, body = lines[0], lines[1:]
+        for i in range(0, len(body), 25):
+            part = ([header] if i == 0 else [f"{_TIER_EMOJI[t]} <b>Тир {t}</b> (ещё)"])
+            part += body[i:i + 25]
+            await m.answer("\n".join(part), parse_mode="HTML",
+                           disable_web_page_preview=True)
+            await asyncio.sleep(0.2)
 
 
 @dp.message(Command("criteria"))
@@ -346,8 +389,10 @@ async def main():
     scheduler = AsyncIOScheduler()
     scheduler.add_job(monitor.poll_once, "interval",
                       minutes=POLL_MINUTES, args=[bot], id="poll")
+    scheduler.add_job(monitor.cleanup_stale, "interval",
+                      hours=24, args=[bot], id="cleanup")
     scheduler.start()
-    log.info("планировщик запущен, интервал %d мин, источников: %d",
+    log.info("планировщик: опрос %d мин, чистка раз в сутки, источников: %d",
              POLL_MINUTES, len(SOURCES))
     await dp.start_polling(bot)
 
