@@ -22,6 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import storage
 import monitor
+import ranking
 from config import BOT_TOKEN, POLL_MINUTES
 from sources import SOURCES
 
